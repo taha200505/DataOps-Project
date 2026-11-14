@@ -1,9 +1,6 @@
 version: '3.8'
 
 services:
-  # ==========================================
-  # HADOOP HDFS (Stockage)
-  # ==========================================
   namenode:
     image: apache/hadoop:3.3.6
     container_name: dataproc-namenode
@@ -30,7 +27,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
     networks:
       - dataproc
 
@@ -58,32 +55,38 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
     networks:
       - dataproc
 
   # ==========================================
-  # APACHE SPARK (Traitement)
+  # SPARK (image custom avec Python 3.11)
   # ==========================================
   spark-master:
-    image: apache/spark:3.5.1
+    build:
+      context: ./spark
+    image: dataproc-spark:3.5.1-py311
     container_name: dataproc-spark-master
     hostname: spark-master
     user: root
     ports:
-      - "8080:8080" # Spark Master UI
-      - "7077:7077" # Port l-Jupyter bach y-tconnecta
+      - "8080:8080"
+      - "7077:7077"
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - PYSPARK_PYTHON=/opt/conda/bin/python
+      - PYSPARK_DRIVER_PYTHON=/opt/conda/bin/python
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host spark-master
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M
     networks:
       - dataproc
 
   spark-worker-1:
-    image: apache/spark:3.5.1
+    image: dataproc-spark:3.5.1-py311
     container_name: dataproc-spark-worker-1
     hostname: spark-worker-1
     user: root
@@ -92,17 +95,22 @@ services:
     environment:
       - SPARK_WORKER_MEMORY=1G
       - SPARK_WORKER_CORES=1
+      - SPARK_LOCAL_IP=spark-worker-1
+      - PYSPARK_PYTHON=/opt/conda/bin/python
+      - PYSPARK_DRIVER_PYTHON=/opt/conda/bin/python
+    volumes:
+      - ./hadoop-conf:/opt/hadoop/etc/hadoop
     command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --webui-port 8081
     deploy:
       resources:
         limits:
-          memory: 1536M 
+          memory: 1536M
     networks:
       - dataproc
 
   spark-worker-2:
-    image: apache/spark:3.5.1
+    image: dataproc-spark:3.5.1-py311
     container_name: dataproc-spark-worker-2
     hostname: spark-worker-2
     user: root
@@ -111,8 +119,13 @@ services:
     environment:
       - SPARK_WORKER_MEMORY=1G
       - SPARK_WORKER_CORES=1
+      - SPARK_LOCAL_IP=spark-worker-2
+      - PYSPARK_PYTHON=/opt/conda/bin/python
+      - PYSPARK_DRIVER_PYTHON=/opt/conda/bin/python
+    volumes:
+      - ./hadoop-conf:/opt/hadoop/etc/hadoop
     command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --webui-port 8081
     deploy:
       resources:
         limits:
@@ -121,7 +134,7 @@ services:
       - dataproc
 
   # ==========================================
-  # JUPYTER (Workspace)
+  # JUPYTER
   # ==========================================
   jupyter:
     build:
@@ -132,16 +145,23 @@ services:
       - spark-master
       - spark-worker-1
       - spark-worker-2
+      - namenode
     environment:
       JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
-      PYSPARK_PYTHON: python3
-      PYSPARK_DRIVER_PYTHON: python3
+      PYSPARK_PYTHON: /opt/conda/bin/python
+      PYSPARK_DRIVER_PYTHON: /opt/conda/bin/python
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      YARN_CONF_DIR: /opt/hadoop/etc/hadoop
+      SPARK_LOCAL_IP: jupyter
+      SPARK_DRIVER_HOST: jupyter
+      SPARK_DRIVER_MEMORY: 1g
+      SPARK_EXECUTOR_MEMORY: 1g
     volumes:
       - ./hadoop-conf:/opt/hadoop/etc/hadoop
       - ./notebooks:/home/jovyan/work
     ports:
       - "8888:8888"
-      - "4040:4040" # Spark Driver UI
+      - "4040:4040"
     command: >
       start-notebook.py
       --NotebookApp.token=''
@@ -149,12 +169,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536M
+          memory: 2048M
     networks:
       - dataproc
 
   # ==========================================
-  # MONITORING (Grafana & Prometheus)
+  # MONITORING
   # ==========================================
   prometheus:
     image: prom/prometheus:latest
